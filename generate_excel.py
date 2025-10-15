@@ -6,6 +6,7 @@ import uuid
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
+from openpyxl.formatting.rule import FormulaRule
 
 ### Configuration
 TICKER_SYMBOLS = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'TSLA', 'META', 'NFLX', 'NVDA', 'INTC', 'AMD']
@@ -64,7 +65,7 @@ def generate_synthetic_trade_data(num_records, quantity_range, status_distributi
         })
     return trade_data
 
-def apply_excel_formatting(excel_file):
+def apply_excel_formatting(excel_file, num_records, large_trade_threshold=500000):
     """Applies professional formatting to the Excel file for an easy-to-read report."""
 
     # Load workbook and select active sheet
@@ -77,8 +78,14 @@ def apply_excel_formatting(excel_file):
 
     # Styles
     header_font = Font(bold=True, color="FFFFFF")
-    header_fill = PatternFill(start_color="0a3e7d", end_color="0a3e7d", fill_type="solid")
+    header_fill = PatternFill(start_color="0a3e7d", fill_type="solid")
     center_align = Alignment(horizontal="center", vertical="center")
+
+    # Styles for conditional formatting
+    red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+    red_font = Font(color="9C0006")
+    yellow_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+
     
     for cell in ws[1]:
         cell.font = header_font
@@ -87,13 +94,13 @@ def apply_excel_formatting(excel_file):
 
     for col_idx, all_col_cells in enumerate(ws.columns, 1):
 
-        # Format currency columns
+        ### Format currency columns
         column_header = ws.cell(row=1, column=col_idx).value
         if column_header in ['Trade Price', 'Trade Value']:
             for cell in all_col_cells[1:]:
                 cell.number_format = '$#,##0.00'
 
-        # Auto-adjust column width
+        ### Auto-adjust column width
         max_length = 0
         column_letter = get_column_letter(col_idx)
         for cell in all_col_cells:
@@ -105,6 +112,19 @@ def apply_excel_formatting(excel_file):
         
         adjusted_width = (max_length + 2)
         ws.column_dimensions[column_letter].width = adjusted_width
+    
+    ### Conditional Formatting Logic
+
+    data_range = f"A2:{get_column_letter(ws.max_column)}{num_records + 1}"
+
+    # Rule 1: highlight a row if the 'Status' in column H is "FAILED"
+    failed_trade_rule = FormulaRule(formula=['$H2="FAILED"'], fill=red_fill, font=red_font)
+
+    # Rule 2: highlight 'Trade Value' in column G if it exceeds a threshold (e.g., $500,000)
+    large_trade_rule = FormulaRule(formula=[f'$G2>{large_trade_threshold}'], fill=yellow_fill)
+
+    ws.conditional_formatting.add(data_range, failed_trade_rule)
+    ws.conditional_formatting.add(data_range, large_trade_rule)
 
     wb.save(excel_file)
     print(f"Applied formatting to '{excel_file}'.")
@@ -123,13 +143,14 @@ def main():
     ### Configuration
     NUM_RECORDS = 100
     OUTPUT_FILENAME = 'output.xlsx'
+    LARGE_TRADE_THRESHOLD = 3000000 # for flagging large trades
     
     ### Define Rules for QA Scenario ###
 
     scenarios = {
         'standard day': {
             'quantity_range': (10, 5001),
-            'status_distribution': {'EXECUTED': 95, 'PENDING': 4, 'FAILED': 1}
+            'status_distribution': {'EXECUTED': 94, 'PENDING': 4, 'FAILED': 2}
         },
         'high_volume_failures': {
             'quantity_range': (100, 10001),
@@ -156,13 +177,20 @@ def main():
 
     ### Process and save data to Excel
     df = pd.DataFrame(trade_data)
+
+    ### FIRST LOGICAL OPERATION: DERIVED COLUMN
     df['Trade Value'] = df['Trade Price'] * df['Quantity']
-    df = df[['Trade ID', 'Ticker', 'Trade Type', 'Trade Price', 'Quantity','Trade Value', 'Status', 'Source IP']]
+
+    ### SECOND LOGICAL OPERATION: COMPLEX DERIVED COLUMN
+    # Flag trades if they failed OR are unusually large. This simulates a compliance rule.
+    df['Flagged for Review'] = (df['Status'] == 'FAILED') | (df['Trade Value'] > LARGE_TRADE_THRESHOLD)
+
+    df = df[['Trade ID', 'Account ID', 'Ticker', 'Trade Type', 'Trade Price', 'Quantity','Trade Value', 'Status', 'Source IP', 'Flagged for Review']]
 
     df.to_excel(OUTPUT_FILENAME, index=False, sheet_name=selected_scenario_name)
     print(f"Successfully generated '{OUTPUT_FILENAME}'.")
 
-    apply_excel_formatting(excel_file=OUTPUT_FILENAME)
+    apply_excel_formatting(excel_file=OUTPUT_FILENAME,num_records=NUM_RECORDS, large_trade_threshold=LARGE_TRADE_THRESHOLD)
     print("Script finished successfully!")
 
 
