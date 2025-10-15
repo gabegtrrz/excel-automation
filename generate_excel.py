@@ -54,13 +54,64 @@ def generate_synthetic_trade_data(num_records, quantity_range, status_distributi
 
         trade_data.append({
             'Trade ID': str(uuid.uuid4()),
+            'Account ID': str(uuid.uuid4()),
             'Ticker': ticker,
-            'Trade Price': trade_price,
+            'Trade Type': random.choice(['BUY', 'SELL']),
             'Quantity': quantity,
+            'Trade Price': trade_price,
             'Status': trade_status,
             'Source IP': fake.ipv4()
         })
     return trade_data
+
+def apply_excel_formatting(excel_file):
+    """Applies professional formatting to the Excel file for an easy-to-read report."""
+
+    # Load workbook and select active sheet
+    wb = load_workbook(excel_file)
+    ws = wb.active
+
+    if ws is None:
+        print(f"Error: No active worksheet found in '{excel_file}'. Cannot apply formatting.")
+        return
+
+    # Styles
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="0a3e7d", end_color="0a3e7d", fill_type="solid")
+    center_align = Alignment(horizontal="center", vertical="center")
+    
+    for cell in ws[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center_align
+
+    for col_idx, all_col_cells in enumerate(ws.columns, 1):
+
+        # Format currency columns
+        column_header = ws.cell(row=1, column=col_idx).value
+        if column_header in ['Trade Price', 'Trade Value']:
+            for cell in all_col_cells[1:]:
+                cell.number_format = '$#,##0.00'
+
+        # Auto-adjust column width
+        max_length = 0
+        column_letter = get_column_letter(col_idx)
+        for cell in all_col_cells:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        
+        adjusted_width = (max_length + 2)
+        ws.column_dimensions[column_letter].width = adjusted_width
+
+    wb.save(excel_file)
+    print(f"Applied formatting to '{excel_file}'.")
+
+    return 
+
+
 
 
 def main():
@@ -71,7 +122,7 @@ def main():
 
     ### Configuration
     NUM_RECORDS = 100
-    OUTPUT_FILE_NAME = 'output.xlsx'
+    OUTPUT_FILENAME = 'output.xlsx'
     
     ### Define Rules for QA Scenario ###
 
@@ -108,10 +159,12 @@ def main():
     df['Trade Value'] = df['Trade Price'] * df['Quantity']
     df = df[['Trade ID', 'Ticker', 'Trade Type', 'Trade Price', 'Quantity','Trade Value', 'Status', 'Source IP']]
 
-    df.to_excel(OUTPUT_FILE_NAME, index=False, sheet_name=selected_scenario_name)
-    print(f"Successfully generated '{OUTPUT_FILE_NAME}'.")
+    df.to_excel(OUTPUT_FILENAME, index=False, sheet_name=selected_scenario_name)
+    print(f"Successfully generated '{OUTPUT_FILENAME}'.")
 
-    
+    apply_excel_formatting(excel_file=OUTPUT_FILENAME)
+    print("Script finished successfully!")
+
 
 
 if __name__ == "__main__":
