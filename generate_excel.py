@@ -146,7 +146,7 @@ def main():
     selected_scenario_name = 'standard day'
     selected_scenario = scenarios[selected_scenario_name] # to double-check
 
-    print(f"Generating excel data for scenario: {selected_scenario}...")
+    print(f"Generating excel data for scenario: \n \n {selected_scenario}... \n")
 
     trade_data = generate_synthetic_trade_data(
         num_records=NUM_RECORDS,
