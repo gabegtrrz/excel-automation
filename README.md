@@ -77,3 +77,9 @@ pip install -r requirements.txt
 ```sh
 python generate_excel.py
 ```
+
+### References
+
+* [openpyxl — a reference guide](https://www.notion.so/gutxii/openpyxl-a-quick-reference-guide-28d8ed918c5480a389a5d5aef8fa8016#28d8ed918c54801f98c1f29574627e58)
+
+* https://openpyxl.readthedocs.io/en/stable/tutorial.html
