@@ -1,3 +1,4 @@
+import logging
 import pandas as pd
 import numpy as np
 from faker import Faker
@@ -24,6 +25,39 @@ BASE_PRICES = {
     'AMD'  : 218.09
 }
 
+def configure_logging(level: int = logging.INFO) -> None:
+    """Configure the root logger for the application.
+
+    The default level is INFO; set to DEBUG for verbose diagnostics.
+    """
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
+
+def validate_scenario_config(quantity_range, status_distribution) -> None:
+    """Validate scenario inputs to prevent runtime errors and ensure sane defaults.
+
+    Raises ValueError with descriptive messages when validation fails.
+    """
+    if not isinstance(quantity_range, (tuple, list)) or len(quantity_range) != 2:
+        raise ValueError("quantity_range must be a (min, max) tuple/list with two elements")
+    min_q, max_q = quantity_range
+    if not (isinstance(min_q, (int, np.integer)) and isinstance(max_q, (int, np.integer))):
+        raise ValueError("quantity_range values must be integers")
+    if min_q < 0 or max_q <= 0 or min_q >= max_q:
+        raise ValueError("quantity_range must be non-negative and min < max")
+
+    if not isinstance(status_distribution, dict) or not status_distribution:
+        raise ValueError("status_distribution must be a non-empty dict of {status: weight}")
+    for status, weight in status_distribution.items():
+        if not isinstance(status, str) or not status:
+            raise ValueError("All status keys must be non-empty strings")
+        if not isinstance(weight, (int, float)) or weight < 0:
+            raise ValueError("All status weights must be non-negative numbers")
+    if sum(status_distribution.values()) == 0:
+        raise ValueError("Sum of status_distribution weights must be > 0")
+
 def generate_synthetic_trade_data(num_records, quantity_range, status_distribution):
     """
     Generates a list of synthetic financial trade data records based on specific rules as a rule-based submodel.
@@ -45,35 +79,44 @@ def generate_synthetic_trade_data(num_records, quantity_range, status_distributi
 
 
     for _ in range(num_records):
-        ticker = random.choice(TICKER_SYMBOLS)
-        base_price = BASE_PRICES[ticker]
+        # Use per-record try to avoid aborting the whole run due to one bad record
+        try:
+            ticker = random.choice(TICKER_SYMBOLS)
+            base_price = BASE_PRICES[ticker]
 
-        trade_price = round(np.random.normal(loc=base_price, scale=1.5), 2)
-        quantity = np.random.randint(low=quantity_range[0], high=quantity_range[1])
+            trade_price = round(np.random.normal(loc=base_price, scale=1.5), 2)
+            quantity = np.random.randint(low=quantity_range[0], high=quantity_range[1])
 
-        trade_status = random.choices(statuses, weights, k=1)[0] # always returns a list so take first element
+            trade_status = random.choices(statuses, weights, k=1)[0] # always returns a list so take first element
 
-        trade_data.append({
-            'Trade ID': str(uuid.uuid4()),
-            'Account ID': str(uuid.uuid4()),
-            'Ticker': ticker,
-            'Trade Type': random.choice(['BUY', 'SELL']),
-            'Quantity': quantity,
-            'Trade Price': trade_price,
-            'Status': trade_status,
-            'Source IP': fake.ipv4()
-        })
+            trade_data.append({
+                'Trade ID': str(uuid.uuid4()),
+                'Account ID': str(uuid.uuid4()),
+                'Ticker': ticker,
+                'Trade Type': random.choice(['BUY', 'SELL']),
+                'Quantity': quantity,
+                'Trade Price': trade_price,
+                'Status': trade_status,
+                'Source IP': fake.ipv4()
+            })
+        except Exception as e:
+            logging.warning("Skipping record due to generation error: %s", e)
     return trade_data
 
 def apply_excel_formatting(excel_file, num_records, large_trade_threshold=500000):
     """Applies professional formatting to the Excel file for an easy-to-read report."""
 
     # Load workbook and select active sheet
-    wb = load_workbook(excel_file)
+    try:
+        wb = load_workbook(excel_file)
+    except Exception as exc:
+        logging.error("Failed to load workbook '%s': %s", excel_file, exc)
+        return
+
     ws = wb.active
 
     if ws is None:
-        print(f"Error: No active worksheet found in '{excel_file}'. Cannot apply formatting.")
+        logging.error("No active worksheet found in '%s'. Cannot apply formatting.", excel_file)
         return
 
     # Styles
@@ -107,7 +150,8 @@ def apply_excel_formatting(excel_file, num_records, large_trade_threshold=500000
             try:
                 if len(str(cell.value)) > max_length:
                     max_length = len(str(cell.value))
-            except:
+            except Exception:
+                # If a cell's value can't be stringified, skip width contribution
                 pass
         
         adjusted_width = (max_length + 2)
@@ -123,11 +167,17 @@ def apply_excel_formatting(excel_file, num_records, large_trade_threshold=500000
     # Rule 2: highlight 'Trade Value' in column G if it exceeds a threshold (e.g., $500,000)
     large_trade_rule = FormulaRule(formula=[f'$G2>{large_trade_threshold}'], fill=yellow_fill)
 
-    ws.conditional_formatting.add(data_range, failed_trade_rule)
-    ws.conditional_formatting.add(data_range, large_trade_rule)
+    try:
+        ws.conditional_formatting.add(data_range, failed_trade_rule)
+        ws.conditional_formatting.add(data_range, large_trade_rule)
+    except Exception as exc:
+        logging.warning("Failed to add conditional formatting: %s", exc)
 
-    wb.save(excel_file)
-    print(f"Applied formatting to '{excel_file}'.")
+    try:
+        wb.save(excel_file)
+        logging.info("Applied formatting to '%s'.", excel_file)
+    except Exception as exc:
+        logging.error("Failed to save formatted workbook '%s': %s", excel_file, exc)
 
     return 
 
@@ -135,10 +185,14 @@ def apply_excel_formatting(excel_file, num_records, large_trade_threshold=500000
 
 
 def main():
-    """Main function to define rules, select a scenario, and generate the data. This demonstrates building a configurable tool.
+    """Main function to define rules, select a scenario, and generate the data.
+
+    This 
+    demonstrates building a configurable tool with robust error handling around generation and I/O steps.
     """
 
-    print("Starting Trade Data Excel File Generation...")
+    configure_logging()
+    logging.info("Starting Trade Data Excel File Generation...")
 
     ### Configuration
     NUM_RECORDS = 100
@@ -167,7 +221,17 @@ def main():
     selected_scenario_name = 'standard day'
     selected_scenario = scenarios[selected_scenario_name] # to double-check
 
-    print(f"Generating excel data for scenario: \n \n {selected_scenario}... \n")
+    logging.info("Generating excel data for scenario: %s", selected_scenario)
+
+    # Validate configuration before generating data to fail-fast on bad input
+    try:
+        validate_scenario_config(
+            quantity_range=selected_scenario['quantity_range'],
+            status_distribution=selected_scenario['status_distribution']
+        )
+    except ValueError as exc:
+        logging.error("Invalid scenario configuration: %s", exc)
+        return
 
     trade_data = generate_synthetic_trade_data(
         num_records=NUM_RECORDS,
@@ -187,13 +251,21 @@ def main():
 
     df = df[['Trade ID', 'Account ID', 'Ticker', 'Trade Type', 'Trade Price', 'Quantity','Trade Value', 'Status', 'Source IP', 'Flagged for Review']]
 
-    df.to_excel(OUTPUT_FILENAME, index=False, sheet_name=selected_scenario_name)
-    print(f"Successfully generated '{OUTPUT_FILENAME}'.")
+    try:
+        df.to_excel(OUTPUT_FILENAME, index=False, sheet_name=selected_scenario_name)
+        logging.info("Successfully generated '%s'.", OUTPUT_FILENAME)
+    except Exception as exc:
+        logging.error("Failed to write Excel file '%s': %s", OUTPUT_FILENAME, exc)
+        return
 
     apply_excel_formatting(excel_file=OUTPUT_FILENAME,num_records=NUM_RECORDS, large_trade_threshold=LARGE_TRADE_THRESHOLD)
-    print("Script finished successfully!")
+    logging.info("Script finished successfully!")
 
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        # Top-level guard to ensure any unexpected exception is logged with traceback
+        logging.exception("Unhandled error during execution")
